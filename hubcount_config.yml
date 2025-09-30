@@ -1,0 +1,108 @@
+datasources:
+  helpdesk:
+    uri: sqlite:///helpdesk_demo.db
+  finance:
+    uri: sqlite:///finance_demo.db
+  hotel:
+    uri: postgresql+psycopg2://miller:123456@127.0.0.1:5432/hotel
+
+metrics:
+  # ================= HELP DESK =================
+  tickets_open:
+    title: "Chamados abertos"
+    source: helpdesk
+    type: single
+    sql: |
+      SELECT COUNT(*) AS value
+      FROM tickets
+      WHERE status IN ('open','pending');
+
+  tickets_by_status:
+    title: "Tickets por status"
+    source: helpdesk
+    type: bar
+    label_col: label
+    value_col: value
+    sql: |
+      SELECT status AS label, COUNT(*) AS value
+      FROM tickets
+      GROUP BY status
+      ORDER BY value DESC;
+
+  # ================= HOTEL (POSTGRES) =================
+  hotel_revenue_total:
+    title: "Receita total"
+    source: hotel
+    type: single
+    sql: |
+      SELECT SUM(amount) AS value
+      FROM transactions1
+      WHERE type = 'revenue';
+
+  hotel_expenses_total:
+    title: "Despesas totais"
+    source: hotel
+    type: single
+    sql: |
+      SELECT SUM(amount) AS value
+      FROM transactions1
+      WHERE type = 'expense';
+
+  hotel_balance:
+    title: "Saldo"
+    source: hotel
+    type: single
+    sql: |
+      SELECT
+        (SUM(CASE WHEN type='revenue' THEN amount ELSE 0 END) -
+         SUM(CASE WHEN type='expense' THEN amount ELSE 0 END)) AS value
+      FROM transactions1;
+
+  hotel_revenue_by_category:
+    title: "Receita por categoria"
+    source: hotel
+    type: bar
+    label_col: label
+    value_col: value
+    sql: |
+      SELECT category AS label, SUM(amount) AS value
+      FROM transactions1
+      WHERE type = 'revenue'
+      GROUP BY category
+      ORDER BY value DESC;
+
+  hotel_expenses_by_category:
+    title: "Despesas por categoria"
+    source: hotel
+    type: pie
+    label_col: label
+    value_col: value
+    sql: |
+      SELECT category AS label, SUM(amount) AS value
+      FROM transactions1
+      WHERE type = 'expense'
+      GROUP BY category
+      ORDER BY value DESC;
+
+  hotel_balance_month:
+    title: "Saldo por mês"
+    source: hotel
+    type: line
+    label_col: label
+    value_col: value
+    sql: |
+      SELECT to_char(date_trunc('month', date), 'YYYY-MM') AS label,
+             SUM(CASE WHEN type='revenue' THEN amount ELSE -amount END) AS value
+      FROM transactions1
+      GROUP BY 1
+      ORDER BY 1;
+
+  hotel_top10_table:
+    title: "Top 10 lançamentos (valor)"
+    source: hotel
+    type: table
+    sql: |
+      SELECT id, date, type, category, description, amount
+      FROM transactions1
+      ORDER BY amount DESC
+      LIMIT 10;
