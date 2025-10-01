@@ -522,7 +522,7 @@ HTML = """
 
     <div id="errors" class="mb-3"></div>
     <div class="row" id="cards"></div>
-    <div class="footer mt-5">Feito com Flask + SQLAlchemy + Chart.js • Edite <code>hubcount_config.yml</code>.</div>
+    <div class="footer mt-5">Feito com Flask + SQLAlchemy + Chart.js • Edite <code>hubcount_config.yml</code> para adicionar bancos e métricas.</div>
   </div>
 
   <script>
@@ -627,8 +627,6 @@ def home():
 
 # YAML exemplo (apenas para primeira execução, se arquivo não existir)
 DEFAULT_YAML_EXAMPLE = r"""
-<<<<<<< HEAD
-=======
 # hubcount_config.yml (exemplo)
 
 # Configuração do KeyCloak para autenticação das APIs do RM
@@ -639,47 +637,37 @@ keycloak:
 
 # APIs do RM
 rm_apis:
-  # Exemplo de API do RM - ajustar conforme suas APIs reais
+  # Configurar suas APIs reais do RM aqui
   rm_financeiro:
     name: "rm_financeiro"
     type: "rm-api"
-    base_url: "https://api.rm.com/financeiro"
+    base_url: "https://api.rm.sebrae.com/financeiro"
     timeout: 30
     description: "API do RM para dados financeiros"
   
   rm_rh:
     name: "rm_rh"
     type: "rm-api" 
-    base_url: "https://api.rm.com/rh"
+    base_url: "https://api.rm.sebrae.com/rh"
     timeout: 30
     description: "API do RM para dados de RH"
 
->>>>>>> dev
 datasources:
   helpdesk:
     uri: sqlite:///helpdesk_demo.db
   finance:
     uri: sqlite:///finance_demo.db
+  # Exemplo Postgres (ajuste credenciais/host):
   # hotel:
   #   uri: postgresql+psycopg2://usuario:senha@127.0.0.1:5432/hotel
-  # api_financeiro:
-  #   type: http
-  #   uri: https://api.exemplo.com/v1/financeiro
-  #   auth:
-  #     token_url: https://auth.exemplo.com/realms/xxx/protocol/openid-connect/token
-  #     client_id: hubcount
-  #     client_secret: SEU_CLIENT_SECRET
-  #     grant_type: client_credentials
 
 metrics:
+  # --- HELP DESK (demo) ---
   tickets_open:
     title: "Chamados abertos"
     source: helpdesk
     type: single
     sql: |
-<<<<<<< HEAD
-      SELECT COUNT(*) AS value FROM tickets WHERE status IN ('open','pending');
-=======
       SELECT COUNT(*) AS value
       FROM tickets
       WHERE status IN ('open','pending');
@@ -713,7 +701,7 @@ metrics:
     desc: "Despesas agrupadas por categoria via API do RM"
     api_query: "/despesas/por-categoria"
 
-  # --- RM RH (API) ---
+  # --- EXEMPLO: RM RH (API) ---
   rm_total_funcionarios:
     title: "Total de Funcionários (RM)"
     source: rm_rh
@@ -727,8 +715,49 @@ metrics:
     type: pie
     desc: "Distribuição de funcionários por departamento via API do RM"
     api_query: "/funcionarios/por-departamento"
->>>>>>> dev
 """
+
+# ------------------------- Seed demo (SQLite) -------------------------
+@app.post("/api/seed-demo")
+def seed_demo():
+    """Cria/zera bancos demo SQLite (helpdesk_demo.db e finance_demo.db)."""
+    import sqlite3
+    # Helpdesk
+    hd = sqlite3.connect("helpdesk_demo.db")
+    hd.executescript("""
+      CREATE TABLE IF NOT EXISTS tickets(
+        id INTEGER PRIMARY KEY,
+        subject TEXT, status TEXT, agent TEXT, created_at TEXT
+      );
+      DELETE FROM tickets;
+      INSERT INTO tickets(subject,status,agent,created_at) VALUES
+        ('Erro no login','open','Alice','2025-09-01'),
+        ('Falha no boleto','pending','Bob','2025-09-02'),
+        ('Dúvida de uso','closed','Alice','2025-09-03'),
+        ('Integração API','open','Carol','2025-09-04'),
+        ('Bug UI','open','Bob','2025-09-05'),
+        ('Lentidão','pending','Alice','2025-09-06');
+    """)
+    hd.commit(); hd.close()
+
+    # Finance
+    fn = sqlite3.connect("finance_demo.db")
+    fn.executescript("""
+      CREATE TABLE IF NOT EXISTS invoices(
+        id INTEGER PRIMARY KEY,
+        client_name TEXT, amount REAL, status TEXT, paid_at TEXT
+      );
+      DELETE FROM invoices;
+      INSERT INTO invoices(client_name,amount,status,paid_at) VALUES
+        ('ACME', 1200.00, 'paid',   '2025-06-10'),
+        ('ACME',  850.00, 'paid',   '2025-07-01'),
+        ('Globex', 300.00, 'unpaid','2025-07-15'),
+        ('Inova',  990.00, 'paid',   '2025-08-02'),
+        ('Inova', 1300.00, 'paid',   '2025-09-05'),
+        ('SoluTI', 450.00, 'paid',   '2025-09-20');
+    """)
+    fn.commit(); fn.close()
+    return jsonify({"ok": True, "msg": "Bancos demo criados/atualizados."})
 
 if __name__ == "__main__":
     app.run(debug=True)

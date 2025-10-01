@@ -6,22 +6,24 @@ keycloak:
 
 # APIs do RM
 rm_apis:
-  # Exemplo de API do RM - ajustar conforme suas APIs reais
+  # Configurar suas APIs reais do RM aqui
   rm_financeiro:
     name: "rm_financeiro"
     type: "rm-api"
-    base_url: "https://api.rm.com/financeiro"
+    base_url: "https://api.rm.sebrae.com/financeiro"
     timeout: 30
     description: "API do RM para dados financeiros"
   
   rm_rh:
     name: "rm_rh"
     type: "rm-api" 
-    base_url: "https://api.rm.com/rh"
+    base_url: "https://api.rm.sebrae.com/rh"
     timeout: 30
     description: "API do RM para dados de RH"
 
+# Datasources SQL (se necessário)
 datasources:
+<<<<<<< HEAD
   helpdesk:
     uri: sqlite:///helpdesk_demo.db
   finance:
@@ -35,8 +37,19 @@ datasources:
       client_id: hubcount
       client_secret: u6HwtrG83cIEAGAdALWKf1AmIVRlXLM
       grant_type: client_credentials
+=======
+  # Exemplo para PostgreSQL:
+  # producao:
+  #   uri: postgresql+psycopg2://usuario:senha@servidor:5432/banco
+  
+  # Exemplo para MySQL:
+  # mysql_db:
+  #   uri: mysql+pymysql://usuario:senha@servidor:3306/banco
+>>>>>>> luiz
 
+# Métricas das APIs do RM
 metrics:
+<<<<<<< HEAD
   # ================= HELP DESK =================
   tickets_open:
     title: "Chamados abertos"
@@ -145,6 +158,9 @@ metrics:
       LIMIT 10;
 
   # ================= RM FINANCEIRO =================
+=======
+  # --- RM FINANCEIRO ---
+>>>>>>> luiz
   rm_total_receitas:
     title: "Total de Receitas (RM)"
     source: rm_financeiro
@@ -159,7 +175,7 @@ metrics:
     desc: "Despesas agrupadas por categoria via API do RM"
     api_query: "/despesas/por-categoria"
 
-  # ================= RM RH =================
+  # --- RM RH ---
   rm_total_funcionarios:
     title: "Total de Funcionários (RM)"
     source: rm_rh
