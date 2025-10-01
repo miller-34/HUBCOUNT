@@ -1,24 +1,25 @@
 # Configuração do KeyCloak para autenticação das APIs do RM
+# ATENÇÃO: Credenciais agora vêm do arquivo .env por segurança
 keycloak:
-  auth_url: "https://lus.rr.sebrae.com.br/realms/sebrae-corporate/protocol/openid-connect/token"
-  client_id: "hubcount"
-  client_secret: "7nI3Ttz2v4TFdN4d5xujB8pPYUMXVTSw"
+  auth_url: "${KEYCLOAK_AUTH_URL}"
+  client_id: "${KEYCLOAK_CLIENT_ID}"
+  client_secret: "${KEYCLOAK_CLIENT_SECRET}"
 
 # APIs do RM
+# ATENÇÃO: URLs agora vêm do arquivo .env por segurança
 rm_apis:
-  # Configurar suas APIs reais do RM aqui
   rm_financeiro:
     name: "rm_financeiro"
     type: "rm-api"
-    base_url: "https://api.rm.sebrae.com/financeiro"
-    timeout: 30
+    base_url: "${RM_FINANCEIRO_BASE_URL}"
+    timeout: "${RM_API_TIMEOUT}"
     description: "API do RM para dados financeiros"
   
   rm_rh:
     name: "rm_rh"
     type: "rm-api" 
-    base_url: "https://api.rm.sebrae.com/rh"
-    timeout: 30
+    base_url: "${RM_RH_BASE_URL}"
+    timeout: "${RM_API_TIMEOUT}"
     description: "API do RM para dados de RH"
 
 # Datasources SQL (se necessário)
