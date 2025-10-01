@@ -14,6 +14,10 @@ from typing import Any, Dict, Optional, List, Union
 from flask import Flask, jsonify, request, Response, render_template_string
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import Engine
+from dotenv import load_dotenv
+
+# Carrega variáveis de ambiente do arquivo .env
+load_dotenv()
 
 # Importações dos módulos de APIs do RM
 from keycloak_auth import initialize_keycloak_auth
@@ -29,6 +33,20 @@ logger = logging.getLogger(__name__)
 app = Flask(__name__)
 
 # ------------------------- Tipos/Config -------------------------
+
+def expand_env_vars(data):
+    """Expande variáveis de ambiente nos valores da configuração"""
+    if isinstance(data, dict):
+        return {k: expand_env_vars(v) for k, v in data.items()}
+    elif isinstance(data, list):
+        return [expand_env_vars(item) for item in data]
+    elif isinstance(data, str) and data.startswith("${") and data.endswith("}"):
+        # Extrai o nome da variável: ${VAR_NAME} -> VAR_NAME
+        var_name = data[2:-1]
+        return os.getenv(var_name, data)  # Retorna o valor da env var ou o valor original
+    else:
+        return data
+
 @dataclass
 class DataSource:
     name: str
@@ -63,6 +81,9 @@ class Config:
                 f.write(DEFAULT_YAML_EXAMPLE.strip() + "\n")
         with open(path, "r", encoding="utf-8") as f:
             raw = yaml.safe_load(f) or {}
+        
+        # Expande variáveis de ambiente
+        raw = expand_env_vars(raw)
         
         # Datasources SQL
         dss: Dict[str, DataSource] = {}
@@ -489,27 +510,31 @@ def home():
 DEFAULT_YAML_EXAMPLE = r"""
 # hubcount_config.yml
 
+# IMPORTANTE: Credenciais agora vêm do arquivo .env
+# 1. Copie .env.example para .env
+# 2. Preencha os valores reais no .env
+# 3. NUNCA commite o arquivo .env!
+
 # Configuração do KeyCloak para autenticação das APIs do RM
 keycloak:
-  auth_url: "https://lus.rr.sebrae.com.br/realms/sebrae-corporate/protocol/openid-connect/token"
-  client_id: "hubcount"
-  client_secret: "7nI3Ttz2v4TFdN4d5xujB8pPYUMXVTSw"
+  auth_url: "${KEYCLOAK_AUTH_URL}"
+  client_id: "${KEYCLOAK_CLIENT_ID}"
+  client_secret: "${KEYCLOAK_CLIENT_SECRET}"
 
 # APIs do RM
 rm_apis:
-  # Configurar suas APIs reais do RM aqui
   rm_financeiro:
     name: "rm_financeiro"
     type: "rm-api"
-    base_url: "https://api.rm.sebrae.com/financeiro"
-    timeout: 30
+    base_url: "${RM_FINANCEIRO_BASE_URL}"
+    timeout: "${RM_API_TIMEOUT}"
     description: "API do RM para dados financeiros"
   
   rm_rh:
     name: "rm_rh"
     type: "rm-api" 
-    base_url: "https://api.rm.sebrae.com/rh"
-    timeout: 30
+    base_url: "${RM_RH_BASE_URL}"
+    timeout: "${RM_API_TIMEOUT}"
     description: "API do RM para dados de RH"
 
 # Datasources SQL (se necessário)
@@ -522,11 +547,9 @@ datasources:
   # mysql_db:
   #   uri: mysql+pymysql://usuario:senha@servidor:3306/banco
 
-# Métricas
+# Métricas das APIs do RM
 metrics:
-  # Configurar suas métricas reais aqui
-  
-  # --- EXEMPLO: RM FINANCEIRO (API) ---
+  # --- RM FINANCEIRO ---
   rm_total_receitas:
     title: "Total de Receitas (RM)"
     source: rm_financeiro
@@ -541,7 +564,7 @@ metrics:
     desc: "Despesas agrupadas por categoria via API do RM"
     api_query: "/despesas/por-categoria"
 
-  # --- EXEMPLO: RM RH (API) ---
+  # --- RM RH ---
   rm_total_funcionarios:
     title: "Total de Funcionários (RM)"
     source: rm_rh
