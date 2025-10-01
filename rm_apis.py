@@ -57,6 +57,10 @@ class RMAPIBase(ABC):
             if 'timeout' not in kwargs:
                 kwargs['timeout'] = self.timeout
             
+            # Garante que timeout seja int/float (não string)
+            if isinstance(kwargs['timeout'], str):
+                kwargs['timeout'] = int(kwargs['timeout'])
+            
             # Monta URL completa
             url = f"{self.base_url}/{endpoint.lstrip('/')}"
             
@@ -202,6 +206,10 @@ class RMAPIFactory:
         name = api_config['name']
         base_url = api_config['base_url']
         timeout = api_config.get('timeout', 30)
+        
+        # Garante que timeout seja int (pode vir como string do .env)
+        if isinstance(timeout, str):
+            timeout = int(timeout)
         
         if api_type == 'rm-api':
             return RMAPI(name, base_url, timeout)
