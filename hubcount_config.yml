@@ -1,3 +1,26 @@
+# Configuração do KeyCloak para autenticação das APIs do RM
+keycloak:
+  auth_url: "https://lus.rr.sebrae.com.br/realms/sebrae-corporate/protocol/openid-connect/token"
+  client_id: "hubcount"
+  client_secret: "7nI3Ttz2v4TFdN4d5xujB8pPYUMXVTSw"
+
+# APIs do RM
+rm_apis:
+  # Exemplo de API do RM - ajustar conforme suas APIs reais
+  rm_financeiro:
+    name: "rm_financeiro"
+    type: "rm-api"
+    base_url: "https://api.rm.com/financeiro"
+    timeout: 30
+    description: "API do RM para dados financeiros"
+  
+  rm_rh:
+    name: "rm_rh"
+    type: "rm-api" 
+    base_url: "https://api.rm.com/rh"
+    timeout: 30
+    description: "API do RM para dados de RH"
+
 datasources:
   helpdesk:
     uri: sqlite:///helpdesk_demo.db
@@ -120,3 +143,33 @@ metrics:
       FROM transactions1
       ORDER BY amount DESC
       LIMIT 10;
+
+  # ================= RM FINANCEIRO =================
+  rm_total_receitas:
+    title: "Total de Receitas (RM)"
+    source: rm_financeiro
+    type: single
+    desc: "Total de receitas obtido via API do RM"
+    api_query: "/receitas/total"
+
+  rm_despesas_por_categoria:
+    title: "Despesas por Categoria (RM)"
+    source: rm_financeiro  
+    type: bar
+    desc: "Despesas agrupadas por categoria via API do RM"
+    api_query: "/despesas/por-categoria"
+
+  # ================= RM RH =================
+  rm_total_funcionarios:
+    title: "Total de Funcionários (RM)"
+    source: rm_rh
+    type: single
+    desc: "Número total de funcionários via API do RM"
+    api_query: "/funcionarios/count"
+
+  rm_funcionarios_por_departamento:
+    title: "Funcionários por Departamento (RM)"
+    source: rm_rh
+    type: pie
+    desc: "Distribuição de funcionários por departamento via API do RM"
+    api_query: "/funcionarios/por-departamento"
