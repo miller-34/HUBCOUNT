@@ -8,15 +8,23 @@ HubCount BI Studio – Flask (single-file)
 """
 
 from __future__ import annotations
-import os, time, yaml
+import os, time, yaml, logging
 from dataclasses import dataclass
-from typing import Any, Dict, Optional, List
+from typing import Any, Dict, Optional, List, Union
 from flask import Flask, jsonify, request, Response, render_template_string
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import Engine
 
+# Importações dos módulos de APIs do RM
+from keycloak_auth import initialize_keycloak_auth
+from rm_apis import get_rm_api, clear_api_cache
+
 APP_TITLE = "Análise de Dados Sebrae-RR"
 DEFAULT_CONFIG_PATH = os.environ.get("HUBCOUNT_CONFIG", "hubcount_config.yml")
+
+# Configurar logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
 
@@ -25,22 +33,28 @@ app = Flask(__name__)
 class DataSource:
     name: str
     uri: str
+    ds_type: str = "sql"  # "sql" ou "api"
 
 @dataclass
 class Metric:
     key: str
     title: str
     source: str
-    sql: str
     mtype: str               # single | bar | line | pie | table
+    sql: Optional[str] = None
+    api_query: Optional[str] = None
     value_col: Optional[str] = None
     label_col: Optional[str] = None
     desc: Optional[str] = None
 
 class Config:
-    def __init__(self, datasources: Dict[str, DataSource], metrics: Dict[str, Metric]):
+    def __init__(self, datasources: Dict[str, DataSource], metrics: Dict[str, Metric], 
+                 keycloak_config: Optional[Dict[str, str]] = None, 
+                 rm_apis_config: Optional[Dict[str, Dict[str, Any]]] = None):
         self.datasources = datasources
         self.metrics = metrics
+        self.keycloak_config = keycloak_config
+        self.rm_apis_config = rm_apis_config or {}
 
     @staticmethod
     def from_yaml(path: str) -> "Config":
@@ -49,22 +63,42 @@ class Config:
                 f.write(DEFAULT_YAML_EXAMPLE.strip() + "\n")
         with open(path, "r", encoding="utf-8") as f:
             raw = yaml.safe_load(f) or {}
+        
+        # Datasources SQL
         dss: Dict[str, DataSource] = {}
         for name, d in (raw.get("datasources") or {}).items():
-            dss[name] = DataSource(name=name, uri=d["uri"])
+            dss[name] = DataSource(name=name, uri=d["uri"], ds_type="sql")
+        
+        # APIs do RM como datasources
+        rm_apis_config = raw.get("rm_apis") or {}
+        for name, api_config in rm_apis_config.items():
+            api_config["name"] = name
+            dss[name] = DataSource(name=name, uri="", ds_type="api")
+        
+        # Métricas
         mets: Dict[str, Metric] = {}
         for key, m in (raw.get("metrics") or {}).items():
             mets[key] = Metric(
                 key=key,
                 title=m.get("title", key),
                 source=m["source"],
-                sql=m["sql"],
+                sql=m.get("sql"),
+                api_query=m.get("api_query"),
                 mtype=m.get("type", "single"),
                 value_col=m.get("value_col", "value"),
                 label_col=m.get("label_col", "label"),
                 desc=m.get("desc"),
             )
-        return Config(datasources=dss, metrics=mets)
+        
+        # Configuração do KeyCloak
+        keycloak_config = raw.get("keycloak")
+        
+        return Config(
+            datasources=dss, 
+            metrics=mets, 
+            keycloak_config=keycloak_config,
+            rm_apis_config=rm_apis_config
+        )
 
 # ------------------------- Engines cache -------------------------
 _engine_cache: Dict[str, Engine] = {}
@@ -82,22 +116,59 @@ def run_metric(conf: Config, metric_key: str) -> Dict[str, Any]:
     if not ds:
         raise KeyError(f"DataSource '{m.source}' não encontrado para a métrica '{metric_key}'.")
 
-    eng = get_engine(ds.uri)
     t0 = time.time()
-    with eng.connect() as conn:
-        result = conn.execute(text(m.sql))
-        rows = [dict(r._mapping) for r in result]
+    
+    if ds.ds_type == "sql":
+        # Execução SQL tradicional
+        if not m.sql:
+            raise ValueError(f"Métrica '{metric_key}' do tipo SQL deve ter campo 'sql'.")
+        
+        eng = get_engine(ds.uri)
+        with eng.connect() as conn:
+            result = conn.execute(text(m.sql))
+            rows = [dict(r._mapping) for r in result]
+    
+    elif ds.ds_type == "api":
+        # Execução via API do RM
+        if not m.api_query:
+            raise ValueError(f"Métrica '{metric_key}' do tipo API deve ter campo 'api_query'.")
+        
+        api_config = conf.rm_apis_config.get(m.source)
+        if not api_config:
+            raise KeyError(f"Configuração da API '{m.source}' não encontrada.")
+        
+        api = get_rm_api(m.source, api_config)
+        rows = api.execute_query(m.api_query)
+        
+    else:
+        raise ValueError(f"Tipo de datasource não suportado: {ds.ds_type}")
+    
     elapsed_ms = int((time.time() - t0) * 1000)
 
     if m.mtype == "single":
         val_col = m.value_col or "value"
-        value = rows[0][val_col] if rows else None
+        value = rows[0][val_col] if rows and val_col in rows[0] else (rows[0] if rows else None)
+        if isinstance(value, dict):
+            # Se o valor é um dict, tenta pegar o primeiro valor numérico
+            for v in value.values():
+                if isinstance(v, (int, float)):
+                    value = v
+                    break
         payload = {"type": "single", "value": value, "elapsed_ms": elapsed_ms}
     elif m.mtype in ("bar", "line", "pie"):
         val_col = m.value_col or "value"
         lab_col = m.label_col or "label"
-        labels = [str(r[lab_col]) for r in rows]
-        values = [float(r[val_col]) if r.get(val_col) is not None else 0 for r in rows]
+        labels = [str(r.get(lab_col, f"Item {i+1}")) for i, r in enumerate(rows)]
+        values = []
+        for r in rows:
+            val = r.get(val_col, 0)
+            if val is not None:
+                try:
+                    values.append(float(val))
+                except (ValueError, TypeError):
+                    values.append(0)
+            else:
+                values.append(0)
         payload = {"type": m.mtype, "labels": labels, "values": values, "elapsed_ms": elapsed_ms}
     elif m.mtype == "table":
         payload = {"type": "table", "rows": rows, "elapsed_ms": elapsed_ms}
@@ -109,6 +180,20 @@ def run_metric(conf: Config, metric_key: str) -> Dict[str, Any]:
 # ------------------------- Carrega config -------------------------
 config: Config = Config.from_yaml(DEFAULT_CONFIG_PATH)
 
+# Inicializa KeyCloak se configurado
+if config.keycloak_config:
+    try:
+        initialize_keycloak_auth(
+            config.keycloak_config["auth_url"],
+            config.keycloak_config["client_id"],
+            config.keycloak_config["client_secret"]
+        )
+        logger.info("KeyCloak inicializado com sucesso")
+    except Exception as e:
+        logger.error(f"Erro ao inicializar KeyCloak: {e}")
+else:
+    logger.warning("Configuração do KeyCloak não encontrada")
+
 # ------------------------- APIs -------------------------
 @app.get("/api/health")
 def api_health() -> Response:
@@ -116,7 +201,32 @@ def api_health() -> Response:
 
 @app.get("/api/datasources")
 def api_datasources() -> Response:
-    return jsonify({"datasources": list(config.datasources.keys())})
+    datasources_info = {}
+    for name, ds in config.datasources.items():
+        datasources_info[name] = {
+            "name": name,
+            "type": ds.ds_type
+        }
+    return jsonify({"datasources": list(config.datasources.keys()), "datasources_info": datasources_info})
+
+@app.get("/api/keycloak/test")
+def api_keycloak_test() -> Response:
+    """Testa a conectividade com o KeyCloak"""
+    if not config.keycloak_config:
+        return jsonify({"ok": False, "error": "KeyCloak não configurado"}), 400
+    
+    try:
+        from keycloak_auth import get_keycloak_auth
+        auth = get_keycloak_auth()
+        token = auth.get_access_token()
+        return jsonify({
+            "ok": True, 
+            "message": "Token obtido com sucesso",
+            "token_length": len(token),
+            "has_token": bool(token)
+        })
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
 
 @app.get("/api/metrics")
 def api_metrics() -> Response:
@@ -150,7 +260,29 @@ def api_refresh_config() -> Response:
     global config
     try:
         config = Config.from_yaml(DEFAULT_CONFIG_PATH)
-        return jsonify({"ok": True, "metrics": list(config.metrics.keys()), "datasources": list(config.datasources.keys())})
+        
+        # Reinicializa KeyCloak se necessário
+        if config.keycloak_config:
+            try:
+                initialize_keycloak_auth(
+                    config.keycloak_config["auth_url"],
+                    config.keycloak_config["client_id"],
+                    config.keycloak_config["client_secret"]
+                )
+                logger.info("KeyCloak reinicializado com sucesso")
+            except Exception as e:
+                logger.error(f"Erro ao reinicializar KeyCloak: {e}")
+        
+        # Limpa cache de APIs
+        clear_api_cache()
+        
+        return jsonify({
+            "ok": True, 
+            "metrics": list(config.metrics.keys()), 
+            "datasources": list(config.datasources.keys()),
+            "keycloak_configured": bool(config.keycloak_config),
+            "rm_apis": list(config.rm_apis_config.keys())
+        })
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 400
 
@@ -356,6 +488,30 @@ def home():
 # ------------------------- YAML exemplo -------------------------
 DEFAULT_YAML_EXAMPLE = r"""
 # hubcount_config.yml (exemplo)
+
+# Configuração do KeyCloak para autenticação das APIs do RM
+keycloak:
+  auth_url: "https://lus.rr.sebrae.com.br/realms/sebrae-corporate/protocol/openid-connect/token"
+  client_id: "hubcount"
+  client_secret: "7nI3Ttz2v4TFdN4d5xujB8pPYUMXVTSw"
+
+# APIs do RM
+rm_apis:
+  # Exemplo de API do RM - ajustar conforme suas APIs reais
+  rm_financeiro:
+    name: "rm_financeiro"
+    type: "rm-api"
+    base_url: "https://api.rm.com/financeiro"
+    timeout: 30
+    description: "API do RM para dados financeiros"
+  
+  rm_rh:
+    name: "rm_rh"
+    type: "rm-api" 
+    base_url: "https://api.rm.com/rh"
+    timeout: 30
+    description: "API do RM para dados de RH"
+
 datasources:
   helpdesk:
     uri: sqlite:///helpdesk_demo.db
@@ -389,6 +545,36 @@ metrics:
       WHERE status = 'paid'
       GROUP BY 1
       ORDER BY 1;
+
+  # --- RM FINANCEIRO (API) ---
+  rm_total_receitas:
+    title: "Total de Receitas (RM)"
+    source: rm_financeiro
+    type: single
+    desc: "Total de receitas obtido via API do RM"
+    api_query: "/receitas/total"
+
+  rm_despesas_por_categoria:
+    title: "Despesas por Categoria (RM)"
+    source: rm_financeiro  
+    type: bar
+    desc: "Despesas agrupadas por categoria via API do RM"
+    api_query: "/despesas/por-categoria"
+
+  # --- RM RH (API) ---
+  rm_total_funcionarios:
+    title: "Total de Funcionários (RM)"
+    source: rm_rh
+    type: single
+    desc: "Número total de funcionários via API do RM"
+    api_query: "/funcionarios/count"
+
+  rm_funcionarios_por_departamento:
+    title: "Funcionários por Departamento (RM)"
+    source: rm_rh
+    type: pie
+    desc: "Distribuição de funcionários por departamento via API do RM"
+    api_query: "/funcionarios/por-departamento"
 """
 
 # ------------------------- Seed demo (SQLite) -------------------------
