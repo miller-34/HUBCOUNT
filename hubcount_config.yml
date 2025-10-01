@@ -5,6 +5,13 @@ datasources:
     uri: sqlite:///finance_demo.db
   hotel:
     uri: postgresql+psycopg2://miller:123456@127.0.0.1:5432/hotel
+  api_financeiro:
+    uri: https://api.rr.sebrae.com.br/v1/financeiro
+    auth:
+      token_url: https://auth.rr.sebrae.com.br/realms/sebrae-corporate-homolog/protocol/openid-connect/token
+      client_id: hubcount
+      client_secret: u6HwtrG83cIEAGAdALWKf1AmIVRlXLM
+      grant_type: client_credentials
 
 metrics:
   # ================= HELP DESK =================
@@ -16,6 +23,13 @@ metrics:
       SELECT COUNT(*) AS value
       FROM tickets
       WHERE status IN ('open','pending');
+
+  api_financeiro_total:
+    title: "Faturamento Total (API)"
+    source: api_financeiro
+    type: single
+    sql: |
+      {"path": "data.total"}  # caminho do campo no JSON da API
 
   tickets_by_status:
     title: "Tickets por status"
